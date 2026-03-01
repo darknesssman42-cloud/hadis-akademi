@@ -6,100 +6,75 @@ const User = require('../models/User');
 const Badge = require('../models/Badge');
 const { protect } = require('../middleware/auth');
 
-// Quiz sorusu oluşturma yardımcısı
-async function generateQuestions(hadith, type, allHadiths) {
+// Quiz sorusu oluşturma - her hadis için 2 soru
+async function generateQuestions(hadith, allHadiths) {
     const questions = [];
+    const others = allHadiths.filter(h => h._id.toString() !== hadith._id.toString());
 
-    if (type === 'multiple_choice') {
-        // Türkçe mealinden Arapça'yı bul
-        const wrongOptions = allHadiths
-            .filter(h => h._id.toString() !== hadith._id.toString())
-            .sort(() => Math.random() - 0.5)
-            .slice(0, 3)
-            .map(h => h.turkish.substring(0, 80) + '...');
+    // Soru 1: Türkçe mealinden doğru hadisi bul
+    const wrongOptions1 = others
+        .sort(() => Math.random() - 0.5)
+        .slice(0, 3)
+        .map(h => h.turkish.length > 80 ? h.turkish.substring(0, 80) + '...' : h.turkish);
 
-        const correctAnswer = hadith.turkish.substring(0, 80) + '...';
-        const options = [...wrongOptions, correctAnswer].sort(() => Math.random() - 0.5);
+    const correctAnswer1 = hadith.turkish.length > 80 ? hadith.turkish.substring(0, 80) + '...' : hadith.turkish;
+    const options1 = [...wrongOptions1, correctAnswer1].sort(() => Math.random() - 0.5);
 
-        questions.push({
-            questionText: `"${hadith.arabic}" hadisinin Türkçe meali hangisidir?`,
-            options,
-            correctAnswer,
-            userAnswer: '',
-            isCorrect: false
-        });
+    questions.push({
+        questionText: `"${hadith.arabic}" hadisinin Türkçe meali hangisidir?`,
+        options: options1,
+        correctAnswer: correctAnswer1,
+        userAnswer: '',
+        isCorrect: false
+    });
 
-        // Kaynağını bul
-        const sourceOptions = allHadiths
-            .filter(h => h._id.toString() !== hadith._id.toString())
-            .slice(0, 3)
-            .map(h => h.source);
-        sourceOptions.push(hadith.source);
-        questions.push({
-            questionText: 'Bu hadisin kaynağı (ravisi/kitabı) hangisidir?',
-            options: [...new Set(sourceOptions)].sort(() => Math.random() - 0.5),
-            correctAnswer: hadith.source,
-            userAnswer: '',
-            isCorrect: false
-        });
+    // Soru 2: Ravisini / kaynağını bul (rastgele seç)
+    const questionTypes = ['narrator', 'source', 'topic'];
+    const type = questionTypes[Math.floor(Math.random() * questionTypes.length)];
+
+    let qText, correctAns, wrongOpts;
+    if (type === 'narrator') {
+        qText = 'Bu hadisi rivayet eden sahabi/alim kimdir?';
+        correctAns = hadith.narrator;
+        wrongOpts = [...new Set(others.map(h => h.narrator))].sort(() => Math.random() - 0.5).slice(0, 3);
+    } else if (type === 'source') {
+        qText = 'Bu hadisin kaynağı hangisidir?';
+        correctAns = hadith.source;
+        wrongOpts = [...new Set(others.map(h => h.source))].sort(() => Math.random() - 0.5).slice(0, 3);
+    } else {
+        qText = 'Bu hadis hangi konu ile ilgilidir?';
+        correctAns = hadith.topic;
+        wrongOpts = [...new Set(others.map(h => h.topic))].sort(() => Math.random() - 0.5).slice(0, 3);
     }
 
-    if (type === 'fill_blank') {
-        const words = hadith.turkish.split(' ');
-        const blankIndex = Math.floor(words.length / 2);
-        const missing = words[blankIndex];
-        const filled = [...words];
-        filled[blankIndex] = '_____';
-        questions.push({
-            questionText: `Boşluğu doldurun: "${filled.join(' ')}"`,
-            options: [],
-            correctAnswer: missing,
-            userAnswer: '',
-            isCorrect: false
-        });
+    // Eğer wrong options arasında doğru cevap varsa çıkar
+    wrongOpts = wrongOpts.filter(o => o !== correctAns).slice(0, 3);
+    const options2 = [...wrongOpts, correctAns].sort(() => Math.random() - 0.5);
 
-        // Narrator fill blank
-        const narratorWords = hadith.narrator.split(' ');
-        questions.push({
-            questionText: `Bu hadisi rivayet eden sahabi/alimin adı nedir? (İpucu: ${narratorWords[0][0]}...)`,
-            options: [],
-            correctAnswer: hadith.narrator,
-            userAnswer: '',
-            isCorrect: false
-        });
-    }
-
-    if (type === 'matching') {
-        // 3 hadis eşleştir: Arapça ↔ Türkçe
-        const sample = [hadith, ...allHadiths.filter(h => h._id.toString() !== hadith._id.toString())
-            .sort(() => Math.random() - 0.5).slice(0, 2)];
-        sample.forEach(h => {
-            questions.push({
-                questionText: `Eşleştir: "${h.arabic.substring(0, 60)}..."`,
-                options: [],
-                correctAnswer: h.turkish.substring(0, 80) + '...',
-                userAnswer: '',
-                isCorrect: false
-            });
-        });
-    }
+    questions.push({
+        questionText: qText,
+        options: options2,
+        correctAnswer: correctAns,
+        userAnswer: '',
+        isCorrect: false
+    });
 
     return questions;
 }
 
-// POST /api/quiz/generate - Quiz oluştur
+// POST /api/quiz/generate - Quiz oluştur (her hadis 2 soru)
 router.post('/generate', protect, async (req, res) => {
     try {
-        const { hadithId, quizType } = req.body;
-        if (!hadithId || !quizType) return res.status(400).json({ error: 'hadithId ve quizType gerekli' });
+        const { hadithId } = req.body;
+        if (!hadithId) return res.status(400).json({ error: 'hadithId gerekli' });
 
         const hadith = await Hadith.findById(hadithId);
         if (!hadith) return res.status(404).json({ error: 'Hadis bulunamadı' });
 
-        const allHadiths = await Hadith.find({ isActive: true, _id: { $ne: hadithId } });
-        const questions = await generateQuestions(hadith, quizType, allHadiths);
+        const allHadiths = await Hadith.find({ isActive: true });
+        const questions = await generateQuestions(hadith, allHadiths);
 
-        res.json({ hadith, quizType, questions });
+        res.json({ hadith, questions });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -108,8 +83,10 @@ router.post('/generate', protect, async (req, res) => {
 // POST /api/quiz/submit - Quiz teslim et
 router.post('/submit', protect, async (req, res) => {
     try {
-        const { hadithId, quizType, answers } = req.body;
-        // answers: [{questionText, correctAnswer, userAnswer}]
+        const { hadithId, answers } = req.body;
+
+        const hadith = await Hadith.findById(hadithId);
+        if (!hadith) return res.status(404).json({ error: 'Hadis bulunamadı' });
 
         const scored = answers.map(a => ({
             ...a,
@@ -118,12 +95,18 @@ router.post('/submit', protect, async (req, res) => {
 
         const score = scored.filter(a => a.isCorrect).length;
         const total = scored.length;
-        const pointsEarned = score * 10;
+
+        // 2 soru doğruysa puan kazanılsın (zorluk bazlı)
+        let pointsEarned = 0;
+        if (score === total) {
+            const difficultyPoints = { kolay: 10, orta: 15, zor: 20 };
+            pointsEarned = difficultyPoints[hadith.difficulty] || 10;
+        }
 
         const attempt = await QuizAttempt.create({
             user: req.user._id,
             hadith: hadithId,
-            quizType,
+            quizType: 'multiple_choice',
             questions: scored,
             score,
             totalQuestions: total,
@@ -133,12 +116,13 @@ router.post('/submit', protect, async (req, res) => {
         // Kullanıcı puanını güncelle
         const user = await User.findById(req.user._id).populate('badges');
         user.points += pointsEarned;
+        user.weeklyPoints = (user.weeklyPoints || 0) + pointsEarned;
         user.totalCorrect += score;
         user.totalAttempted += total;
         await user.save();
 
         // Rozet kontrolü
-        const allBadges = await Badge.find();
+        const allBadges = await Badge.find({ 'requirement.type': { $ne: 'weekly_rank' } });
         const newBadges = [];
         for (const badge of allBadges) {
             if (user.badges.some(b => b._id.toString() === badge._id.toString())) continue;
@@ -158,7 +142,22 @@ router.post('/submit', protect, async (req, res) => {
         }
         await user.save();
 
-        res.json({ attempt, score, total, pointsEarned, newBadges, totalPoints: user.points });
+        res.json({ attempt, score, total, pointsEarned, newBadges, totalPoints: user.points, allCorrect: score === total });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET /api/quiz/daily - Günlük Quiz (Öğretmen tarafından seçilen)
+router.get('/daily', protect, async (req, res) => {
+    try {
+        const today = new Date().toISOString().split('T')[0];
+        const DailyQuiz = require('../models/DailyQuiz');
+        // Retrieve the first daily quiz available for today (assuming 1 global daily quiz or user's teacher class quiz)
+        const dailyQuiz = await DailyQuiz.findOne({ date: today, isActive: true })
+            .populate('hadiths', 'number arabic turkish topic source narrator difficulty');
+
+        res.json(dailyQuiz || { hadiths: [] });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -168,9 +167,9 @@ router.post('/submit', protect, async (req, res) => {
 router.get('/history', protect, async (req, res) => {
     try {
         const attempts = await QuizAttempt.find({ user: req.user._id })
-            .populate('hadith', 'arabic turkish topic')
+            .populate('hadith', 'arabic turkish topic number')
             .sort('-completedAt')
-            .limit(20);
+            .limit(30);
         res.json(attempts);
     } catch (err) {
         res.status(500).json({ error: err.message });

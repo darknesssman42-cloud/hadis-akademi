@@ -9,10 +9,13 @@ export default function BadgesPage() {
         api.get('/badges').then(r => setBadges(r.data)).finally(() => setLoading(false));
     }, []);
 
+    if (loading) return <div className="loading-spinner">⏳</div>;
+
     const earned = badges.filter(b => b.earned);
     const locked = badges.filter(b => !b.earned);
 
-    if (loading) return <div style={{ textAlign: 'center', paddingTop: 80, fontSize: 32 }}>⏳</div>;
+    const rarityLabel = { common: 'Yaygın', rare: 'Nadir', epic: 'Epik', legendary: 'Efsanevi' };
+    const rarityClass = { common: 'rarity-common', rare: 'rarity-rare', epic: 'rarity-epic', legendary: 'rarity-legendary' };
 
     return (
         <div className="animate-fade">
@@ -21,22 +24,25 @@ export default function BadgesPage() {
                 <p>{earned.length} / {badges.length} rozet kazanıldı</p>
             </div>
 
+            {/* Progress */}
             <div className="card" style={{ marginBottom: 20 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <span style={{ fontWeight: 600 }}>İlerleme</span>
-                    <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{earned.length}/{badges.length}</span>
+                <div className="flex-between" style={{ marginBottom: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Rozet İlerleme</span>
+                    <span style={{ fontSize: 13, color: 'var(--gold)', fontWeight: 700 }}>{Math.round((earned.length / badges.length) * 100)}%</span>
                 </div>
                 <div className="progress-bar-outer">
                     <div className="progress-bar-inner" style={{ width: `${(earned.length / badges.length) * 100}%` }} />
                 </div>
             </div>
 
+            {/* Kazanılan */}
             {earned.length > 0 && (
                 <>
-                    <h3 style={{ marginBottom: 14, fontSize: 16, color: 'var(--gold)' }}>✨ Kazanılan Rozetler</h3>
+                    <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>✨ Kazanılan Rozetler ({earned.length})</h3>
                     <div className="badge-grid" style={{ marginBottom: 28 }}>
                         {earned.map(b => (
-                            <div key={b._id} className="badge-item earned">
+                            <div key={b._id} className="badge-item earned animate-scale">
+                                {b.rarity && <span className={`badge-rarity ${rarityClass[b.rarity]}`}>{rarityLabel[b.rarity]}</span>}
                                 <div className="badge-icon">{b.icon}</div>
                                 <div className="badge-name">{b.name}</div>
                                 <div className="badge-desc">{b.description}</div>
@@ -47,22 +53,17 @@ export default function BadgesPage() {
                 </>
             )}
 
+            {/* Kilitli */}
             {locked.length > 0 && (
                 <>
-                    <h3 style={{ marginBottom: 14, fontSize: 16, color: 'var(--text-dim)' }}>🔒 Kilitli Rozetler</h3>
+                    <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>🔒 Kilitli Rozetler ({locked.length})</h3>
                     <div className="badge-grid">
                         {locked.map(b => (
                             <div key={b._id} className="badge-item locked">
+                                {b.rarity && <span className={`badge-rarity ${rarityClass[b.rarity]}`}>{rarityLabel[b.rarity]}</span>}
                                 <div className="badge-icon">{b.icon}</div>
                                 <div className="badge-name">{b.name}</div>
                                 <div className="badge-desc">{b.description}</div>
-                                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>
-                                    {b.requirement.type === 'points' && `${b.requirement.value} puan kazan`}
-                                    {b.requirement.type === 'memorized' && `${b.requirement.value} hadis ezberle`}
-                                    {b.requirement.type === 'quizzes' && `${b.requirement.value} quiz tamamla`}
-                                    {b.requirement.type === 'correct' && `${b.requirement.value} doğru cevap ver`}
-                                    {b.requirement.type === 'streak' && `${b.requirement.value} günlük seri yap`}
-                                </div>
                             </div>
                         ))}
                     </div>

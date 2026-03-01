@@ -1,156 +1,234 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 export default function QuizPage() {
     const { hadithId } = useParams();
     const navigate = useNavigate();
+    const { refreshUser } = useAuth();
+
     const [hadith, setHadith] = useState(null);
-    const [quizType, setQuizType] = useState('');
     const [questions, setQuestions] = useState([]);
-    const [answers, setAnswers] = useState([]);
+    const [answers, setAnswers] = useState({});
     const [submitted, setSubmitted] = useState(false);
     const [result, setResult] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const [generating, setGenerating] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [submitting, setSubmitting] = useState(false);
+
+    // If no hadithId, show quiz selection
+    const [hadiths, setHadiths] = useState([]);
+    const [dailyHadiths, setDailyHadiths] = useState([]);
+    const [selectedHadith, setSelectedHadith] = useState(null);
 
     useEffect(() => {
-        api.get(`/hadiths/${hadithId}`).then(r => setHadith(r.data));
+        if (hadithId) {
+            generateQuiz(hadithId);
+        } else {
+            Promise.all([
+                api.get('/hadiths?limit=100'),
+                api.get('/quiz/daily').catch(() => ({ data: { hadiths: [] } }))
+            ]).then(([hRes, dRes]) => {
+                setHadiths(hRes.data.hadiths || hRes.data || []);
+                setDailyHadiths(dRes.data?.hadiths || []);
+            }).finally(() => setLoading(false));
+        }
     }, [hadithId]);
 
-    const startQuiz = async (type) => {
-        setQuizType(type); setGenerating(true);
-        try {
-            const r = await api.post('/quiz/generate', { hadithId, quizType: type });
+    const generateQuiz = (id) => {
+        setLoading(true);
+        api.post('/quiz/generate', { hadithId: id }).then(r => {
+            setHadith(r.data.hadith);
             setQuestions(r.data.questions);
-            setAnswers(r.data.questions.map(q => ({ ...q, userAnswer: '' })));
-        } finally {
-            setGenerating(false);
-        }
+            setAnswers({});
+            setSubmitted(false);
+            setResult(null);
+        }).finally(() => setLoading(false));
     };
 
-    const selectAnswer = (qi, answer) => {
+    const handleAnswer = (qIndex, answer) => {
         if (submitted) return;
-        setAnswers(prev => prev.map((a, i) => i === qi ? { ...a, userAnswer: answer } : a));
-    };
-
-    const handleFillBlankInput = (qi, val) => {
-        if (submitted) return;
-        setAnswers(prev => prev.map((a, i) => i === qi ? { ...a, userAnswer: val } : a));
+        setAnswers(prev => ({ ...prev, [qIndex]: answer }));
     };
 
     const submitQuiz = async () => {
-        if (answers.some(a => !a.userAnswer)) return alert('Tüm soruları cevaplayın!');
-        setLoading(true);
+        if (Object.keys(answers).length < questions.length) return;
+        setSubmitting(true);
         try {
-            const r = await api.post('/quiz/submit', { hadithId, quizType, answers });
-            setResult(r.data);
+            const scoredAnswers = questions.map((q, i) => ({
+                questionText: q.questionText,
+                options: q.options,
+                correctAnswer: q.correctAnswer,
+                userAnswer: answers[i] || ''
+            }));
+
+            const res = await api.post('/quiz/submit', {
+                hadithId: hadith._id,
+                answers: scoredAnswers
+            });
+
+            setResult(res.data);
             setSubmitted(true);
-            setAnswers(r.data.attempt.questions);
+            await refreshUser();
+        } catch (err) {
+            console.error(err);
         } finally {
-            setLoading(false);
+            setSubmitting(false);
         }
     };
 
-    if (!hadith) return <div style={{ textAlign: 'center', paddingTop: 80, fontSize: 32 }}>⏳</div>;
+    if (loading) return <div className="loading-spinner">⏳</div>;
 
-    // Quiz type selection
-    if (!quizType) return (
-        <div className="animate-fade">
-            <div className="page-header">
-                <h2>🎯 Quiz Başlat</h2>
-                <p>Hadis #{hadith.number}: {hadith.topic}</p>
-            </div>
-            <div className="card" style={{ marginBottom: 20 }}>
-                <div className="hadis-arabic">{hadith.arabic}</div>
-                <div className="hadis-turkish" style={{ marginTop: 8 }}>"{hadith.turkish}"</div>
-            </div>
-            <div className="card-title" style={{ marginBottom: 16 }}>Quiz türü seçin:</div>
-            <div className="grid-3">
-                {[
-                    { type: 'multiple_choice', icon: '🔘', title: 'Çoktan Seçmeli', desc: 'Doğru cevabı 4 seçenek arasından seç' },
-                    { type: 'fill_blank', icon: '✏️', title: 'Boşluk Doldurma', desc: 'Eksik kelime ya da bilgiyi yaz' },
-                    { type: 'matching', icon: '🔗', title: 'Eşleştirme', desc: 'Arapça metni Türkçesiyle eşleştir' }
-                ].map(q => (
-                    <div key={q.type} className="card" style={{ cursor: 'pointer', textAlign: 'center' }}
-                        onClick={() => startQuiz(q.type)}
-                        onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
-                        onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'}>
-                        <div style={{ fontSize: 40, marginBottom: 12 }}>{q.icon}</div>
-                        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 6 }}>{q.title}</div>
-                        <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>{q.desc}</div>
+    // Quiz selection page
+    if (!hadithId && !selectedHadith) {
+        return (
+            <div className="animate-fade">
+                <div className="page-header">
+                    <h2>🎯 Quiz</h2>
+                    <p>Bilginizi test etmek için bir hadis seçin</p>
+                </div>
+
+                {dailyHadiths.length > 0 && (
+                    <div style={{ marginBottom: 24 }}>
+                        <h3 style={{ fontSize: 15, marginBottom: 12, color: 'var(--gold)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                            ⭐ Günün Quizi (Öğretmen Seçimi)
+                        </h3>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            {dailyHadiths.map(h => (
+                                <div key={'daily-' + h._id} className="card" style={{ cursor: 'pointer', padding: '16px 20px', border: '1px solid rgba(249,183,43,0.3)', background: 'rgba(249,183,43,0.05)' }}
+                                    onClick={() => { setSelectedHadith(h._id); generateQuiz(h._id); }}>
+                                    <div className="flex-between">
+                                        <div>
+                                            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--gold)' }}>#{h.number}</span>
+                                            <span style={{ fontSize: 13, fontWeight: 600, marginLeft: 8 }}>{h.topic}</span>
+                                        </div>
+                                        <span className="btn btn-gold btn-sm" style={{ background: 'var(--gold)', color: '#000' }}>Hemen Başla →</span>
+                                    </div>
+                                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 6, fontStyle: 'italic' }}>
+                                        "{h.turkish?.substring(0, 80)}..."
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
                     </div>
-                ))}
-            </div>
-        </div>
-    );
+                )}
 
-    if (generating) return <div style={{ textAlign: 'center', paddingTop: 80 }}><div style={{ fontSize: 48 }}>🧠</div><p style={{ marginTop: 16, color: 'var(--text-dim)' }}>Sorular hazırlanıyor...</p></div>;
+                <h3 style={{ fontSize: 15, marginBottom: 12, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    📚 Tüm Hadisler
+                </h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {hadiths.map(h => (
+                        <div key={h._id} className="card" style={{ cursor: 'pointer', padding: '16px 20px' }}
+                            onClick={() => { setSelectedHadith(h._id); generateQuiz(h._id); }}>
+                            <div className="flex-between">
+                                <div>
+                                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-dim)' }}>#{h.number}</span>
+                                    <span style={{ fontSize: 13, fontWeight: 600, marginLeft: 8 }}>{h.topic}</span>
+                                </div>
+                                <span className="btn btn-primary btn-sm">Quiz Başlat →</span>
+                            </div>
+                            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 6, fontStyle: 'italic' }}>
+                                "{h.turkish?.substring(0, 80)}..."
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                {hadiths.length === 0 && (
+                    <div className="empty-state">
+                        <div className="empty-icon">🎯</div>
+                        <p>Henüz quiz yapılacak hadis bulunmuyor.</p>
+                    </div>
+                )}
+            </div>
+        );
+    }
 
     return (
         <div className="animate-fade">
             <div className="page-header">
-                <h2>🎯 {quizType === 'multiple_choice' ? 'Çoktan Seçmeli' : quizType === 'fill_blank' ? 'Boşluk Doldurma' : 'Eşleştirme'} Quiz</h2>
-                <p>Hadis #{hadith.number}: {hadith.topic}</p>
+                <h2>🎯 Quiz — Hadis #{hadith?.number}</h2>
+                <p>{hadith?.topic} • Her hadis için 2 soru</p>
             </div>
 
-            {questions.map((q, qi) => (
-                <div key={qi} className="card" style={{ marginBottom: 16 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 16, fontSize: 15 }}>Soru {qi + 1}: {q.questionText}</div>
+            {hadith && (
+                <div className="card" style={{ marginBottom: 20, background: 'linear-gradient(135deg, rgba(249,183,43,0.04), var(--card))' }}>
+                    <div style={{ fontFamily: 'var(--arabic)', fontSize: 20, direction: 'rtl', textAlign: 'right', color: 'var(--gold)', lineHeight: 1.7 }}>
+                        {hadith.arabic}
+                    </div>
+                </div>
+            )}
 
-                    {quizType === 'multiple_choice' || quizType === 'matching' ? (
-                        q.options.map((opt, oi) => {
-                            let cls = 'quiz-option';
+            {questions.map((q, qIndex) => (
+                <div key={qIndex} className="card" style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--primary-light)', marginBottom: 6 }}>
+                        Soru {qIndex + 1} / {questions.length}
+                    </div>
+                    <div className="quiz-question">{q.questionText}</div>
+                    <div>
+                        {q.options.map((opt, oIndex) => {
+                            let className = 'quiz-option';
                             if (submitted) {
-                                if (opt === q.correctAnswer) cls += ' correct';
-                                else if (opt === answers[qi]?.userAnswer && opt !== q.correctAnswer) cls += ' wrong';
-                            } else if (answers[qi]?.userAnswer === opt) cls += ' selected';
+                                if (opt === q.correctAnswer) className += ' correct';
+                                else if (answers[qIndex] === opt && opt !== q.correctAnswer) className += ' wrong';
+                            } else if (answers[qIndex] === opt) {
+                                className += ' selected';
+                            }
+
                             return (
-                                <button key={oi} className={cls} onClick={() => selectAnswer(qi, opt)} disabled={submitted}>
-                                    {String.fromCharCode(65 + oi)}) {opt}
+                                <button key={oIndex} className={className}
+                                    onClick={() => handleAnswer(qIndex, opt)}
+                                    disabled={submitted}>
+                                    <span style={{ opacity: 0.5, marginRight: 8, fontWeight: 700 }}>
+                                        {String.fromCharCode(65 + oIndex)})
+                                    </span>
+                                    {opt}
                                 </button>
                             );
-                        })
-                    ) : (
-                        <div>
-                            <input
-                                className="form-input"
-                                placeholder="Cevabınızı buraya yazın..."
-                                value={answers[qi]?.userAnswer || ''}
-                                onChange={e => handleFillBlankInput(qi, e.target.value)}
-                                disabled={submitted}
-                                style={submitted ? { borderColor: answers[qi]?.isCorrect ? 'var(--green)' : 'var(--red)' } : {}}
-                            />
-                            {submitted && (
-                                <div style={{ marginTop: 8, fontSize: 13, color: answers[qi]?.isCorrect ? 'var(--green)' : 'var(--red)' }}>
-                                    {answers[qi]?.isCorrect ? '✅ Doğru!' : `❌ Doğru cevap: ${q.correctAnswer}`}
-                                </div>
-                            )}
-                        </div>
-                    )}
+                        })}
+                    </div>
                 </div>
             ))}
 
             {!submitted ? (
-                <button className="btn btn-primary btn-lg" onClick={submitQuiz} disabled={loading}>
-                    {loading ? '⏳ Gönderiliyor...' : '✅ Quizi Tamamla'}
+                <button className="btn btn-primary btn-lg btn-full" onClick={submitQuiz}
+                    disabled={Object.keys(answers).length < questions.length || submitting}>
+                    {submitting ? '⏳ Gönderiliyor...' : '📝 Cevapları Gönder'}
                 </button>
-            ) : result && (
-                <div className="result-overlay" onClick={() => navigate('/hadiths')}>
+            ) : (
+                <div className="flex-gap" style={{ marginTop: 8 }}>
+                    <button className="btn btn-primary" onClick={() => navigate('/quiz')}>🎯 Yeni Quiz</button>
+                    <button className="btn btn-outline" onClick={() => navigate('/')}>🏠 Ana Sayfa</button>
+                </div>
+            )}
+
+            {/* Sonuç overlay */}
+            {result && (
+                <div className="result-overlay" onClick={() => setResult(null)}>
                     <div className="result-card" onClick={e => e.stopPropagation()}>
-                        <div className="result-icon">{result.score === result.total ? '🏆' : result.score >= result.total / 2 ? '🌟' : '📚'}</div>
-                        <div className="result-title">{result.score === result.total ? 'Mükemmel!' : result.score >= result.total / 2 ? 'Tebrikler!' : 'Devam Et!'}</div>
-                        <div className="result-sub">{result.score} / {result.total} doğru • +{result.pointsEarned} puan kazandın!</div>
+                        <div className="result-icon">{result.allCorrect ? '🎉' : result.score > 0 ? '👍' : '😔'}</div>
+                        <div className="result-title">
+                            {result.allCorrect ? 'Mükemmel!' : result.score > 0 ? 'İyi Deneme!' : 'Tekrar Dene!'}
+                        </div>
+                        <div className="result-sub">
+                            {result.score}/{result.total} doğru cevap
+                            {result.allCorrect && <div style={{ color: 'var(--gold)', fontWeight: 700, marginTop: 6 }}>+{result.pointsEarned} puan kazandınız! ⭐</div>}
+                            {!result.allCorrect && <div style={{ marginTop: 6, fontSize: 13 }}>2 doğru cevap gerekli. Puan kazanılamadı.</div>}
+                        </div>
                         {result.newBadges?.length > 0 && (
-                            <div style={{ margin: '16px 0', padding: 14, background: 'rgba(251,191,36,0.1)', borderRadius: 10, border: '1px solid var(--gold)' }}>
-                                <div style={{ color: 'var(--gold)', fontWeight: 700, marginBottom: 8 }}>🎉 Yeni Rozet Kazandın!</div>
-                                {result.newBadges.map(b => <div key={b._id}>{b.icon} {b.name}</div>)}
+                            <div style={{ marginBottom: 16 }}>
+                                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>🏅 Yeni Rozet Kazandınız!</div>
+                                <div className="flex-gap" style={{ justifyContent: 'center' }}>
+                                    {result.newBadges.map(b => (
+                                        <div key={b._id} style={{ background: 'var(--card2)', padding: '8px 14px', borderRadius: 10, border: '1px solid rgba(249,183,43,0.2)' }}>
+                                            <span style={{ fontSize: 22 }}>{b.icon}</span>
+                                            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--gold)' }}>{b.name}</div>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
-                        <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-                            <button className="btn btn-primary" onClick={() => { setSubmitted(false); setQuizType(''); setQuestions([]); }}>🔄 Tekrar Yap</button>
-                            <button className="btn btn-outline" onClick={() => navigate('/hadiths')}>📖 Hadisler</button>
-                        </div>
+                        <button className="btn btn-primary btn-full" onClick={() => setResult(null)}>Tamam</button>
                     </div>
                 </div>
             )}

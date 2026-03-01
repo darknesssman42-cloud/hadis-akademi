@@ -5,79 +5,115 @@ import { useAuth } from '../context/AuthContext';
 
 export default function HadithListPage() {
     const [hadiths, setHadiths] = useState([]);
-    const [search, setSearch] = useState('');
     const [loading, setLoading] = useState(true);
+    const [search, setSearch] = useState('');
+    const [difficulty, setDifficulty] = useState('');
+    const [page, setPage] = useState(1);
+    const [totalPages, setTotalPages] = useState(1);
     const { user } = useAuth();
     const navigate = useNavigate();
 
-    useEffect(() => {
-        api.get('/hadiths').then(r => setHadiths(r.data)).finally(() => setLoading(false));
-    }, []);
+    const fetchHadiths = () => {
+        setLoading(true);
+        const params = new URLSearchParams({ page, limit: 20 });
+        if (search) params.append('search', search);
+        if (difficulty) params.append('difficulty', difficulty);
 
-    const filtered = hadiths.filter(h =>
-        h.turkish.toLowerCase().includes(search.toLowerCase()) ||
-        h.topic.toLowerCase().includes(search.toLowerCase()) ||
-        h.narrator.toLowerCase().includes(search.toLowerCase())
-    );
-
-    const toggleMemorize = async (h, e) => {
-        e.stopPropagation();
-        const isMemorized = user?.memorizedHadiths?.includes(h._id);
-        if (isMemorized) await api.delete(`/hadiths/${h._id}/memorize`);
-        else await api.post(`/hadiths/${h._id}/memorize`);
-        // Refresh user
-        window.location.reload();
+        api.get(`/hadiths?${params}`)
+            .then(r => {
+                const data = r.data.hadiths || (Array.isArray(r.data) ? r.data : []);
+                setHadiths(data);
+                setTotalPages(r.data.totalPages || 1);
+            })
+            .catch(err => {
+                console.error("Hadiths fetch error:", err);
+                setHadiths([]);
+            })
+            .finally(() => setLoading(false));
     };
 
-    if (loading) return <div style={{ textAlign: 'center', paddingTop: 80, fontSize: 32 }}>⏳</div>;
+    useEffect(() => { fetchHadiths(); }, [page, difficulty]);
+
+    const handleSearch = (e) => {
+        e.preventDefault();
+        setPage(1);
+        fetchHadiths();
+    };
+
+    const isMemorized = (id) => user?.memorizedHadiths?.some(h => (typeof h === 'string' ? h : h._id) === id);
+
+    const diffColors = { kolay: 'var(--green)', orta: 'var(--gold)', zor: 'var(--red)' };
 
     return (
         <div className="animate-fade">
             <div className="page-header">
-                <h2>📖 Hadis Listesi</h2>
-                <p>10. sınıf müfredatındaki tüm hadisler</p>
+                <h2>📖 Hadis Kütüphanesi</h2>
+                <p>Tüm hadislere göz atın, ezberleyin ve test edin</p>
             </div>
 
-            <input
-                className="form-input"
-                placeholder="🔍 Hadis, konu veya raviye göre ara..."
-                value={search} onChange={e => setSearch(e.target.value)}
-                style={{ marginBottom: 20 }}
-            />
+            {/* Arama ve Filtre */}
+            <form onSubmit={handleSearch} style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+                <div className="search-bar" style={{ flex: 1, minWidth: 200, marginBottom: 0 }}>
+                    <span className="search-icon">🔍</span>
+                    <input placeholder="Hadis, konu, ravi veya kaynak ara..." value={search} onChange={e => setSearch(e.target.value)} />
+                </div>
+                <select className="form-select" value={difficulty} onChange={e => { setDifficulty(e.target.value); setPage(1); }} style={{ width: 'auto', minWidth: 120 }}>
+                    <option value="">Tümü</option>
+                    <option value="kolay">Kolay</option>
+                    <option value="orta">Orta</option>
+                    <option value="zor">Zor</option>
+                </select>
+                <button type="submit" className="btn btn-primary btn-sm">Ara</button>
+            </form>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {filtered.map(h => {
-                    const isMemorized = user?.memorizedHadiths?.includes(h._id);
-                    return (
-                        <div key={h._id} className="card" style={{ cursor: 'pointer', transition: 'var(--transition)' }}
-                            onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--primary)'}
-                            onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                    <span style={{ background: 'var(--primary)', borderRadius: 8, padding: '4px 10px', fontSize: 12, fontWeight: 700 }}>#{h.number}</span>
-                                    <span className="tag tag-topic">{h.topic}</span>
-                                    {isMemorized && <span style={{ color: 'var(--gold)', fontSize: 13 }}>✅ Ezberlendi</span>}
-                                </div>
-                                <span className="tag" style={{ background: h.difficulty === 'kolay' ? 'rgba(16,185,129,0.15)' : h.difficulty === 'zor' ? 'rgba(239,68,68,0.15)' : 'rgba(251,191,36,0.1)', color: h.difficulty === 'kolay' ? 'var(--green)' : h.difficulty === 'zor' ? 'var(--red)' : 'var(--gold)' }}>
-                                    {h.difficulty}
-                                </span>
-                            </div>
-                            <div className="hadis-arabic" style={{ fontSize: 20, marginBottom: 8 }}>{h.arabic}</div>
-                            <div style={{ fontSize: 14, color: 'var(--text-dim)', marginBottom: 12, lineHeight: 1.6 }}>"{h.turkish.substring(0, 120)}..."</div>
-                            <div className="hadis-meta" style={{ marginBottom: 12 }}>
-                                <span className="tag tag-narrator">📜 {h.narrator}</span>
-                                <span className="tag tag-source">📚 {h.source}</span>
-                            </div>
-                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                <button className="btn btn-primary btn-sm" onClick={() => navigate(`/quiz/${h._id}`)}>🎯 Quiz Başlat</button>
-                                <button className={`btn btn-sm ${isMemorized ? 'btn-outline' : 'btn-gold'}`} onClick={e => toggleMemorize(h, e)}>
-                                    {isMemorized ? '✅ Ezberlendi' : '⭐ Ezberledim'}
-                                </button>
-                            </div>
+            {loading ? (
+                <div className="loading-spinner">⏳</div>
+            ) : (
+                <>
+                    {hadiths.length === 0 ? (
+                        <div className="empty-state">
+                            <div className="empty-icon">📖</div>
+                            <p>Hadis bulunamadı</p>
                         </div>
-                    );
-                })}
-            </div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                            {hadiths.map(h => (
+                                <div key={h._id} className="card" style={{ cursor: 'pointer' }} onClick={() => navigate(`/quiz/${h._id}`)}>
+                                    <div className="flex-between" style={{ marginBottom: 8 }}>
+                                        <div>
+                                            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-dim)' }}>#{h.number}</span>
+                                            <span style={{ fontSize: 13, fontWeight: 600, marginLeft: 8 }}>{h.topic}</span>
+                                            {isMemorized(h._id) && <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--green)' }}>✅ Ezberlendi</span>}
+                                        </div>
+                                        <span className="tag" style={{ borderColor: diffColors[h.difficulty], color: diffColors[h.difficulty], background: 'transparent', fontSize: 11 }}>
+                                            {h.difficulty}
+                                        </span>
+                                    </div>
+                                    <div style={{ fontFamily: 'var(--arabic)', fontSize: 20, direction: 'rtl', textAlign: 'right', color: 'var(--gold)', lineHeight: 1.7, marginBottom: 6 }}>
+                                        {h.arabic.length > 100 ? h.arabic.substring(0, 100) + '...' : h.arabic}
+                                    </div>
+                                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', fontStyle: 'italic', marginBottom: 8 }}>
+                                        "{h.turkish.length > 120 ? h.turkish.substring(0, 120) + '...' : h.turkish}"
+                                    </div>
+                                    <div className="flex-gap" style={{ gap: 6 }}>
+                                        <span className="tag tag-narrator" style={{ fontSize: 10 }}>📜 {h.narrator}</span>
+                                        <span className="tag tag-source" style={{ fontSize: 10 }}>📚 {h.source}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Pagination */}
+                    {totalPages > 1 && (
+                        <div className="flex-gap" style={{ justifyContent: 'center', marginTop: 20 }}>
+                            <button className="btn btn-outline btn-sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>← Önceki</button>
+                            <span style={{ color: 'var(--text-dim)', fontSize: 13, alignSelf: 'center' }}>{page} / {totalPages}</span>
+                            <button className="btn btn-outline btn-sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Sonraki →</button>
+                        </div>
+                    )}
+                </>
+            )}
         </div>
     );
 }

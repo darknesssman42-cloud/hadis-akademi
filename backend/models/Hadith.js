@@ -9,6 +9,7 @@ const hadithSchema = new mongoose.Schema({
     topic: { type: String, required: true }, // Konu
     dailyExample: { type: String }, // Günlük hayat örneği
     difficulty: { type: String, enum: ['kolay', 'orta', 'zor'], default: 'orta' },
+    isSchoolProgram: { type: Boolean, default: false }, // Okul Ezber programına dahil mi?
     isActive: { type: Boolean, default: true },
     createdAt: { type: Date, default: Date.now }
 });
